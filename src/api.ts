@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db } from './db.js';
 import { getLiveSnapshot, getAllLiveSnapshots } from './liveData.js';
+import { firestore, isFirebaseActive } from './firebase.js';
 import crypto from 'crypto';
 
 export const apiRouter = Router();
@@ -77,8 +78,26 @@ apiRouter.get('/telemetry/:roverId', (req, res) => {
 });
 
 // --- Logs ---
-apiRouter.get('/logs', (req, res) => {
+apiRouter.get('/logs', async (req, res) => {
   const { roverId, limit = 50 } = req.query;
+
+  if (isFirebaseActive && firestore) {
+    try {
+      console.log("Fetching logs from Firestore...");
+      let queryRef: any = firestore.collection('logs').orderBy('ts', 'desc');
+      if (roverId) {
+        queryRef = queryRef.where('roverId', '==', roverId);
+      }
+      queryRef = queryRef.limit(Number(limit));
+      
+      const snapshot = await queryRef.get();
+      const logs = snapshot.docs.map((doc: any) => doc.data());
+      return res.json(logs);
+    } catch (error) {
+      console.error("❌ Failed to fetch logs from Firestore, falling back to SQLite:", error);
+    }
+  }
+  
   let query = 'SELECT * FROM logs';
   const params: any[] = [];
   
@@ -88,7 +107,7 @@ apiRouter.get('/logs', (req, res) => {
   }
   
   query += ' ORDER BY ts DESC LIMIT ?';
-  params.push(limit);
+  params.push(Number(limit));
   
   const results = db.prepare(query).all(...params);
   res.json(results);

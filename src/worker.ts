@@ -1,6 +1,7 @@
 import { Server as SocketServer } from 'socket.io';
 import { db } from './db.js';
 import { updateLiveSnapshot, RoverStatus } from './liveData.js';
+import { firestore, isFirebaseActive } from './firebase.js';
 import crypto from 'crypto';
 
 export function startWorker(io: SocketServer) {
@@ -61,10 +62,29 @@ export function startWorker(io: SocketServer) {
 
       // Periodically generate logs
       if (Math.random() > 0.95) {
-        const insertLog = db.prepare('INSERT INTO logs (id, roverId, level, code, subsystem, message, context, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
         const logId = `log_${crypto.randomBytes(8).toString('hex')}`;
         const msg = "Obstacle detected, evasive maneuver in progress.";
-        insertLog.run(logId, roverId, 'warn', 'WARN_OBSTACLE', 'navigation', msg, JSON.stringify({ speed: 0.5 }), now);
+        const contextStr = JSON.stringify({ speed: 0.5 });
+        
+        const logData = {
+          id: logId,
+          roverId,
+          level: 'warn',
+          code: 'WARN_OBSTACLE',
+          subsystem: 'navigation',
+          message: msg,
+          context: contextStr,
+          ts: now
+        };
+
+        if (isFirebaseActive && firestore) {
+          firestore.collection('logs').doc(logId).set(logData)
+            .then(() => console.log(`[Firestore] Log saved: ${logId}`))
+            .catch(err => console.error("❌ Firestore log write error:", err));
+        } else {
+          const insertLog = db.prepare('INSERT INTO logs (id, roverId, level, code, subsystem, message, context, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+          insertLog.run(logId, roverId, 'warn', 'WARN_OBSTACLE', 'navigation', msg, contextStr, now);
+        }
         
         io.emit(`rover:${roverId}:logs`, {
           id: logId, roverId, level: 'warn', code: 'WARN_OBSTACLE', subsystem: 'navigation', message: msg, ts: now
